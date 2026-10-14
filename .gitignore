@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# 🔐 SECRETS
+.env
+.env.local
+.env.production
+
+# Bot data
+bot_data.json
+*.zip
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
