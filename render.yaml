@@ -1,0 +1,18 @@
+services:
+  - type: worker
+    name: lucky-auto-token-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install --only-binary=:all: -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: DEFAULT_ADMIN
+        value: 8633088314
+      - key: SUPER_ADMINS
+        value: 8633088314,7981894574
+      - key: DATA_FILE
+        value: bot_data.json
+      - key: PYTHON_VERSION
+        value: 3.11.9
