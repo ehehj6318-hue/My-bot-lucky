@@ -8,7 +8,7 @@
 ╚══════════════════════════════════════════════╝
 """
 
-import asyncio, json, os, re, time, logging, zipfile, io, struct
+import asyncio, hashlib, json, os, re, time, logging, zipfile, io, struct
 from datetime import datetime
 from copy     import deepcopy
 
@@ -29,6 +29,7 @@ def _load_env(path=".env"):
 _load_env()
 
 import aiohttp
+from aiohttp import web
 from aiogram                    import Bot, Dispatcher, F, Router
 from aiogram.types              import (Message, CallbackQuery,
                                         InlineKeyboardMarkup,
@@ -41,6 +42,7 @@ from aiogram.fsm.state          import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions         import TelegramBadRequest
 from aiogram.enums              import ChatMemberStatus
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
@@ -71,6 +73,16 @@ def _owner() -> int:
 BOT_TOKEN     = os.getenv("BOT_TOKEN", "").strip()
 if not BOT_TOKEN:
     raise SystemExit("❌ BOT_TOKEN missing!")
+
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
+if not WEBHOOK_SECRET:
+    WEBHOOK_SECRET = hashlib.sha256(
+        f"lucky-auto-token-bot:{BOT_TOKEN}".encode("utf-8")
+    ).hexdigest()
+if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", WEBHOOK_SECRET):
+    raise SystemExit("❌ WEBHOOK_SECRET must contain only letters, numbers, '_' or '-'")
+
+WEBHOOK_PATH = f"/telegram/{hashlib.sha256(BOT_TOKEN.encode('utf-8')).hexdigest()[:32]}"
 
 _DA           = int(os.getenv("DEFAULT_ADMIN", "8633088314").strip())
 
@@ -1072,18 +1084,59 @@ async def grp_handler(msg:Message):
 # ══════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════
-async def main():
+def main():
     bot=Bot(token=BOT_TOKEN)
     dp=Dispatcher(storage=MemoryStorage())
     dp.include_router(R)
-    me=await bot.get_me()
-    log.info(f"✅ @{me.username} | {_VERSION} | {_CREDITS}")
-    try:
-        await bot.send_message(_owner(),
-            f"🚀 <b>{_BRAND_NAME} {_VERSION} Online</b>\n@{me.username}",
-            parse_mode="HTML")
-    except Exception as e: log.warning(f"Owner notify: {e}")
-    await dp.start_polling(bot,allowed_updates=dp.resolve_used_update_types())
+
+    async def on_startup(bot: Bot):
+        public_url = (
+            os.getenv("PUBLIC_BASE_URL", "").strip()
+            or os.getenv("RENDER_EXTERNAL_URL", "").strip()
+        ).rstrip("/")
+        if not public_url.startswith("https://"):
+            raise RuntimeError(
+                "Render did not provide an HTTPS URL. Set PUBLIC_BASE_URL "
+                "to the service's public HTTPS URL."
+            )
+
+        me = await bot.get_me()
+        await bot.set_webhook(
+            url=f"{public_url}{WEBHOOK_PATH}",
+            secret_token=WEBHOOK_SECRET,
+            allowed_updates=dp.resolve_used_update_types(),
+        )
+        log.info(f"✅ Webhook ready for @{me.username} | {_VERSION} | {_CREDITS}")
+        try:
+            await bot.send_message(
+                _owner(),
+                f"🚀 <b>{_BRAND_NAME} {_VERSION} Online</b>\n@{me.username}",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            log.warning(f"Owner notify: {e}")
+
+    dp.startup.register(on_startup)
+
+    app = web.Application()
+
+    async def health(_request):
+        return web.Response(text="ok")
+
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+
+    webhook_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+        secret_token=WEBHOOK_SECRET,
+        handle_in_background=True,
+    )
+    webhook_handler.register(app, path=WEBHOOK_PATH)
+    setup_application(app, dp, bot=bot)
+
+    port = int(os.getenv("PORT", "10000"))
+    web.run_app(app, host="0.0.0.0", port=port)
 
 if __name__=="__main__":
-    asyncio.run(main())
+    main()
